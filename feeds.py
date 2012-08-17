@@ -132,7 +132,7 @@ class Feed(object):
             item.author = util.format(util.get(entry, 'author', '')) # TODO: max length
             if all(filter.filter(item) for filter in filters):
                 result.append(item)
-        self.id_set = new_id_set or self.id_set
+        self.id_set = new_id_set | self.id_set
         return result
         
 class Filter(object):

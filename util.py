@@ -241,7 +241,16 @@ def replace_entities2(text):
         except Exception:
             return match.group(0)
     return entity.sub(func, text)
-    
+
+def replace_entities3(text):
+    entity = re.compile(r'&#x([abcdefABCDEF0-9]{2});')
+    def func(match):
+        try:
+            return unichr(int('0x'+match.group(1),0))
+        except Exception:
+            return match.group(0)
+    return entity.sub(func, text)
+
 def remove_markup(text):
     html = re.compile(r'<[^>]+>')
     return html.sub(' ', text)
@@ -250,8 +259,10 @@ def format(text, max_length=400):
     previous = ''
     while text != previous:
         previous = text
+        text = text.replace('&amp;', '&')
         text = replace_entities1(text)
         text = replace_entities2(text)
+        text = replace_entities3(text)
     text = remove_markup(text)
     text = ' '.join(text.split())
     if len(text) > max_length:

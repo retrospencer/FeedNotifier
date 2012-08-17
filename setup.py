@@ -79,7 +79,7 @@ setup(
     options = {"py2exe":{
         "compressed": 1,
         "optimize": 1,
-        "bundle_files": 1,
+        "bundle_files": 3,
         "includes": ['parsetab'],
     }},
     windows = [{

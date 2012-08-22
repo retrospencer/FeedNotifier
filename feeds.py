@@ -10,13 +10,15 @@ import Queue
 import logging
 import safe_pickle
 from settings import settings
+from datetime import datetime
 
 def cmp_timestamp(a, b):
     return cmp(a.timestamp, b.timestamp)
     
 def create_id(entry):
     keys = ['id', 'link', 'title']
-    values = tuple(util.get(entry, key, None) for key in keys)
+    # 4th param is the time used for determing age of the cached item in our local cache
+    values = util.get(entry,keys[0],None), util.get(entry,keys[1],None),util.get(entry,keys[2],None),time.time()
     return values if any(values) else uuid.uuid4().hex
     
 class Item(object):
@@ -104,36 +106,60 @@ class Feed(object):
         duration = now - self.last_poll
         return duration >= self.interval
     def poll(self, timestamp, filters):
-        logging.info('Polling feed "%s"' % self.url)
-        result = []
-        self.last_poll = timestamp
-        username = util.decode_password(self.username)
-        password = util.decode_password(self.password)
-        d = util.parse(self.url, username, password, self.etag, self.modified)
-        self.etag = util.get(d, 'etag', None)
-        self.modified = util.get(d, 'modified', None)
-        feed = util.get(d, 'feed', None)
-        if feed:
-            self.title = self.title or util.get(feed, 'title', '')
-            self.link = self.link or util.get(feed, 'link', self.url)
-        entries = util.get(d, 'entries', [])
-        new_id_set = set()
-        for entry in reversed(entries):
-            id = create_id(entry)
-            new_id_set.add(id)
-            if id in self.id_set:
-                continue
-            self.item_count += 1
-            item = Item(self, id)
-            item.timestamp = calendar.timegm(util.get(entry, 'date_parsed', time.gmtime()))
-            item.title = util.format(util.get(entry, 'title', ''), settings.POPUP_TITLE_LENGTH)
-            item.description = util.format(util.get(entry, 'description', ''), settings.POPUP_BODY_LENGTH)
-            item.link = util.get(entry, 'link', '')
-            item.author = util.format(util.get(entry, 'author', '')) # TODO: max length
-            if all(filter.filter(item) for filter in filters):
-                result.append(item)
-        self.id_set = new_id_set | self.id_set
-        return result
+        try:
+            logging.info('Polling feed "%s"' % self.url)
+            result = []
+            self.last_poll = timestamp
+            username = util.decode_password(self.username)
+            password = util.decode_password(self.password)
+            d = util.parse(self.url, username, password, self.etag, self.modified)
+            self.etag = util.get(d, 'etag', None)
+            self.modified = util.get(d, 'modified', None)
+            feed = util.get(d, 'feed', None)
+            if feed:
+                self.title = self.title or util.get(feed, 'title', '')
+                self.link = self.link or util.get(feed, 'link', self.url)
+            entries = util.get(d, 'entries', [])
+            for entry in reversed(entries):
+                found = False
+                id = create_id(entry)
+                for i in self.id_set:
+                    # be cheap, compare the links - they should be unique. 
+                    # Can't compare objects anymore because the time is present which will always be different
+                    if id[1] == i[1]: 
+                        found = True
+                        break
+                if found:
+                    continue # The entry is not new, move on to the next one.
+                    
+                self.id_set.add(id)
+                
+                self.item_count += 1
+                item = Item(self, id)
+                item.timestamp = calendar.timegm(util.get(entry, 'date_parsed', time.gmtime()))
+                item.title = util.format(util.get(entry, 'title', ''), settings.POPUP_TITLE_LENGTH)
+                item.description = util.format(util.get(entry, 'description', ''), settings.POPUP_BODY_LENGTH)
+                item.link = util.get(entry, 'link', '')
+                item.author = util.format(util.get(entry, 'author', '')) # TODO: max length
+                if all(filter.filter(item) for filter in filters):
+                    result.append(item)
+                
+            # determine if there are any entries in self.id_set that are older than CACHE_AGE_LIMIT
+            # if there are, remove them from the list (they aged out of the cache)
+            idsToRemove = set()
+            now = datetime.fromtimestamp(time.time())
+            for tempId in self.id_set:
+                diff = now - datetime.fromtimestamp(tempId[3])
+                if abs(diff.days) > settings.CACHE_AGE_LIMIT:
+                    idsToRemove.add(tempId) # can't modify seld.id_set right here.
+            for i in idsToRemove:
+                logging.info('Removing %s because its too old' % i[1])
+                self.id_set.remove(i)
+            
+            return result
+        except Exception, e:
+            logging.info('Error durring poll: %s' % e)
+            raise        
         
 class Filter(object):
     def __init__(self, code, ignore_case=True, whole_word=True, feeds=None):
